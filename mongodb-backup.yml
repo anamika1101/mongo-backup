@@ -1,0 +1,186 @@
+name: MongoDB Backup → Cloudflare R2
+
+on:
+  schedule:
+    - cron: "0 0,12 * * *"   # Backup: runs at 00:00 UTC and 12:00 UTC every day
+    - cron: "0 8   * * *"    # Report: runs at 08:00 UTC every day
+
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Which job to run"
+        required: true
+        default: "backup"
+        type: choice
+        options:
+          - backup
+          - report
+          - restore-dry-run
+      databases:
+        description: "Databases to back up (comma-separated or 'all')"
+        required: false
+        default: "all"
+      dry_run:
+        description: "Skip upload (backup only)"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+env:
+  BACKUP_DIR: /tmp/mongo-backup
+
+jobs:
+
+  # ============================================================================
+  # JOB 1 — Backup + Upload
+  # Triggers: scheduled (00:00 + 12:00 UTC) OR manual dispatch with job=backup
+  # ============================================================================
+  backup:
+    name: Backup + Upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '0 0,12 * * *') ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.job == 'backup' || github.event.inputs.job == ''))
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install MongoDB Database Tools
+        run: |
+          wget -qO - https://www.mongodb.org/static/pgp/server-7.0.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/mongodb-server-7.0.gpg
+          echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] \
+            https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" \
+            | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends mongodb-database-tools gnupg
+          mongodump --version
+
+      - name: Install AWS CLI
+        run: pip install --quiet awscli
+
+      - name: Run Backup
+        id: backup
+        env:
+          MONGO_URI:             ${{ secrets.MONGO_URI }}
+          DATABASES:             ${{ github.event.inputs.databases || 'all' }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+          SLACK_WEBHOOK:         ${{ secrets.SLACK_WEBHOOK }}
+          DISCORD_WEBHOOK:       ${{ secrets.DISCORD_WEBHOOK }}
+          MAX_RETRIES:           "3"
+          RETRY_DELAY:           "15"
+        run: |
+          chmod +x ./scripts/notify.sh ./scripts/backup.sh
+          ./scripts/backup.sh
+
+      - name: Upload to Cloudflare R2
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT:           ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET:             ${{ secrets.R2_BUCKET }}
+          ARCHIVE_PATH:          ${{ steps.backup.outputs.archive_path }}
+          ARCHIVE_NAME:          ${{ steps.backup.outputs.archive_name }}
+          EXPECTED_CHECKSUM:     ${{ steps.backup.outputs.checksum }}
+          ARCHIVE_SIZE:          ${{ steps.backup.outputs.archive_size }}
+          SLACK_WEBHOOK:         ${{ secrets.SLACK_WEBHOOK }}
+          DISCORD_WEBHOOK:       ${{ secrets.DISCORD_WEBHOOK }}
+          KEEP_LAST:             "14"
+        run: |
+          chmod +x ./scripts/upload.sh
+          ./scripts/upload.sh
+
+      - name: Skipped upload (dry run)
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: echo "ℹ️  Dry run — backup created locally, upload skipped."
+
+      - name: Alert on workflow failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK:   ${{ secrets.SLACK_WEBHOOK }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          chmod +x ./scripts/notify.sh
+          source ./scripts/notify.sh
+          notify_all "FAILED" "MongoDB Backup Workflow FAILED" \
+            "The GitHub Actions workflow failed. Check the logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -rf "${BACKUP_DIR}" \
+                 /tmp/last_backup_path.txt \
+                 /tmp/last_backup_name.txt \
+                 /tmp/last_backup_checksum.txt \
+                 /tmp/last_backup_size.txt \
+                 /tmp/verify-*
+
+  # ============================================================================
+  # JOB 2 — Daily Report
+  # Triggers: scheduled (08:00 UTC) OR manual dispatch with job=report
+  # ============================================================================
+  report:
+    name: Daily Backup Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '0 8 * * *') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'report')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install AWS CLI + bc
+        run: pip install --quiet awscli && sudo apt-get install -y -qq bc
+
+      - name: Send Daily Report
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT:           ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET:             ${{ secrets.R2_BUCKET }}
+          SLACK_WEBHOOK:         ${{ secrets.SLACK_WEBHOOK }}
+          DISCORD_WEBHOOK:       ${{ secrets.DISCORD_WEBHOOK }}
+          SENDGRID_API_KEY:      ${{ secrets.SENDGRID_API_KEY }}
+          REPORT_EMAIL_TO:       ${{ secrets.REPORT_EMAIL_TO }}
+          KEEP_LAST:             "14"
+        run: |
+          chmod +x ./scripts/notify.sh ./scripts/daily-report.sh
+          ./scripts/daily-report.sh
+
+  # ============================================================================
+  # JOB 3 — Restore Dry Run (lists available backups, no restore)
+  # Triggers: manual dispatch with job=restore-dry-run
+  # ============================================================================
+  restore-dry-run:
+    name: List Available Backups
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: |
+      github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'restore-dry-run'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install AWS CLI
+        run: pip install --quiet awscli
+
+      - name: List Backups in R2
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT:           ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET:             ${{ secrets.R2_BUCKET }}
+          MONGO_URI:             ${{ secrets.MONGO_URI }}
+          SLACK_WEBHOOK:         ${{ secrets.SLACK_WEBHOOK }}
+          DISCORD_WEBHOOK:       ${{ secrets.DISCORD_WEBHOOK }}
+          DRY_RUN:               "true"
+        run: |
+          chmod +x ./scripts/notify.sh ./scripts/restore.sh
+          ./scripts/restore.sh

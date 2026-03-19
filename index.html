@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>MongoDB Backup Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1f2e;
+      --border: #2a3142;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --green: #22c55e;
+      --yellow: #eab308;
+      --red: #ef4444;
+      --green-bg: #052e16;
+      --yellow-bg: #422006;
+      --red-bg: #450a0a;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .logo { font-size: 2.5rem; }
+
+    header h1 { font-size: 1.4rem; font-weight: 700; }
+    header p  { color: var(--muted); font-size: 0.85rem; margin-top: 0.2rem; }
+
+    /* ── Config panel ── */
+    .config {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .config h2 {
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 1rem;
+    }
+
+    .config-fields {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: flex-end;
+    }
+
+    .field { display: flex; flex-direction: column; gap: 0.35rem; }
+    .field label { font-size: 0.75rem; color: var(--muted); }
+
+    input[type="text"], input[type="password"] {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 0.55rem 0.85rem;
+      font-size: 0.875rem;
+      transition: border-color 0.15s;
+      min-width: 0;
+    }
+
+    input[type="text"]:focus,
+    input[type="password"]:focus { outline: none; border-color: var(--accent); }
+
+    .btn-group { display: flex; gap: 0.5rem; align-items: flex-end; }
+
+    button {
+      border: none;
+      border-radius: 8px;
+      padding: 0.6rem 1.2rem;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+      white-space: nowrap;
+    }
+
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-ghost { background: var(--border); color: var(--text); }
+    .btn-ghost:hover:not(:disabled) { background: #374151; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ── Notice ── */
+    .notice {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 0.85rem 1.1rem;
+      font-size: 0.8rem;
+      color: #94a3b8;
+      margin-bottom: 1.5rem;
+      line-height: 1.6;
+    }
+
+    .notice strong { color: #e2e8f0; }
+
+    /* ── Error ── */
+    .error-box {
+      background: var(--red-bg);
+      border: 1px solid #7f1d1d;
+      border-radius: 8px;
+      padding: 0.85rem 1.1rem;
+      color: #fca5a5;
+      margin-bottom: 1.5rem;
+      font-size: 0.875rem;
+      display: none;
+    }
+
+    /* ── Stats ── */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .stat {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.1rem 1.25rem;
+    }
+
+    .stat-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      margin-bottom: 0.5rem;
+    }
+
+    .stat-value {
+      font-size: 1.6rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .stat-sub { font-size: 0.75rem; color: var(--muted); margin-top: 0.35rem; }
+
+    /* ── Table card ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.9rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .card-header h2 { font-size: 0.9rem; font-weight: 600; }
+    .card-sub { font-size: 0.75rem; color: var(--muted); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+
+    thead th {
+      text-align: left;
+      padding: 0.6rem 1.25rem;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+
+    tbody tr { border-bottom: 1px solid #151a26; transition: background 0.1s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #1f2638; }
+    tbody td { padding: 0.75rem 1.25rem; vertical-align: middle; }
+
+    .mono { font-family: 'Consolas', 'SF Mono', monospace; font-size: 0.78rem; color: #a5b4fc; }
+
+    .bar-wrap { display: flex; align-items: center; gap: 0.6rem; }
+    .bar { height: 5px; border-radius: 3px; background: var(--accent); transition: width 0.3s; }
+
+    /* ── Badges ── */
+    .badge {
+      display: inline-block;
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .badge-green  { background: var(--green-bg);  color: var(--green);  }
+    .badge-yellow { background: var(--yellow-bg); color: var(--yellow); }
+    .badge-red    { background: var(--red-bg);    color: var(--red);    }
+
+    /* ── Empty / loading ── */
+    .placeholder {
+      text-align: center;
+      padding: 3rem 1rem;
+      color: var(--muted);
+      font-size: 0.875rem;
+    }
+
+    .spin {
+      display: inline-block;
+      width: 1.1rem; height: 1.1rem;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 0.4rem;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    footer {
+      margin-top: 2rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.75rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="logo">🗄️</span>
+  <div>
+    <h1>MongoDB Backup Dashboard</h1>
+    <p>Monitor your Cloudflare R2 backups</p>
+  </div>
+</header>
+
+<!-- Config -->
+<div class="config">
+  <h2>Configuration</h2>
+  <div class="config-fields">
+    <div class="field" style="flex:2; min-width:260px">
+      <label>R2 Public Bucket URL</label>
+      <input id="r2Url" type="text"
+        placeholder="https://pub-xxxxxxxxxxxx.r2.dev"
+        value="" />
+    </div>
+    <div class="field" style="width:110px">
+      <label>Prefix</label>
+      <input id="r2Prefix" type="text" value="backups" />
+    </div>
+    <div class="btn-group">
+      <button class="btn-primary" id="loadBtn" onclick="loadBackups()">🔄 Load</button>
+      <button class="btn-ghost" onclick="clearAll()">✕</button>
+    </div>
+  </div>
+</div>
+
+<div class="notice">
+  <strong>Setup:</strong> In the Cloudflare dashboard, go to your R2 bucket → Settings → Public Access → Enable.
+  Copy the <strong>Public Bucket URL</strong> (e.g. <code>https://pub-xxx.r2.dev</code>) and paste it above.
+  For <strong>private buckets</strong>, deploy the included Cloudflare Worker (see <code>dashboard/worker.js</code>) and use its URL instead.
+</div>
+
+<div id="errorBox" class="error-box"></div>
+
+<!-- Stats -->
+<div class="stats">
+  <div class="stat">
+    <div class="stat-label">Total Backups</div>
+    <div class="stat-value" id="sCount">—</div>
+    <div class="stat-sub">files in R2</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Total Storage</div>
+    <div class="stat-value" id="sStorage">—</div>
+    <div class="stat-sub">across all backups</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Status</div>
+    <div class="stat-value" id="sStatus" style="font-size:1rem; padding-top:4px">—</div>
+    <div class="stat-sub" id="sStatusSub"></div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Latest Backup</div>
+    <div class="stat-value" id="sLatest" style="font-size:0.9rem; padding-top:4px">—</div>
+    <div class="stat-sub" id="sLatestAge"></div>
+  </div>
+</div>
+
+<!-- Table -->
+<div class="card">
+  <div class="card-header">
+    <h2>Backup Files</h2>
+    <span class="card-sub" id="cardSub">—</span>
+  </div>
+  <div id="tableWrap">
+    <div class="placeholder">Enter your R2 public URL above and click Load</div>
+  </div>
+</div>
+
+<footer>MongoDB Backup Dashboard · Auto-refreshes every 5 minutes when a URL is set</footer>
+
+<script>
+  let backups = [];
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  function showError(msg) {
+    const el = document.getElementById('errorBox');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+
+  function hideError() {
+    document.getElementById('errorBox').style.display = 'none';
+  }
+
+  function formatBytes(bytes) {
+    if (!bytes || bytes === 0) return '0 B';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(2) + ' MB';
+  }
+
+  function timeAgo(isoDate) {
+    const diff = (Date.now() - new Date(isoDate)) / 3600000;
+    if (diff < 1)   return 'less than 1h ago';
+    if (diff < 24)  return Math.floor(diff) + 'h ago';
+    return Math.floor(diff / 24) + 'd ago';
+  }
+
+  // ── Update stats panel ────────────────────────────────────────────────────
+
+  function updateStats() {
+    const n = backups.length;
+    document.getElementById('sCount').textContent = n || '0';
+
+    if (n === 0) {
+      ['sStorage','sStatus','sLatest'].forEach(id =>
+        document.getElementById(id).textContent = '—'
+      );
+      document.getElementById('sStatusSub').textContent = '';
+      document.getElementById('sLatestAge').textContent = '';
+      document.getElementById('cardSub').textContent = 'No backups found';
+      return;
+    }
+
+    const totalBytes = backups.reduce((s, b) => s + b.size, 0);
+    document.getElementById('sStorage').textContent = formatBytes(totalBytes);
+
+    const latest = backups[backups.length - 1];
+    const hoursOld = (Date.now() - new Date(latest.date)) / 3600000;
+
+    // Status
+    const statusEl = document.getElementById('sStatus');
+    const subEl = document.getElementById('sStatusSub');
+    if (hoursOld <= 13) {
+      statusEl.innerHTML = '<span class="badge badge-green">✅ Healthy</span>';
+      subEl.textContent = 'Backup is up to date';
+    } else if (hoursOld <= 25) {
+      statusEl.innerHTML = `<span class="badge badge-yellow">⚠️ ${Math.floor(hoursOld)}h old</span>`;
+      subEl.textContent = 'Backup is overdue';
+    } else {
+      statusEl.innerHTML = `<span class="badge badge-red">❌ ${Math.floor(hoursOld)}h old</span>`;
+      subEl.textContent = 'Backup critically overdue!';
+    }
+
+    // Latest
+    const shortName = latest.name
+      .replace('mongodb-backup-', '')
+      .replace('.tar.gz.gpg', ' 🔐')
+      .replace('.tar.gz', '');
+    document.getElementById('sLatest').textContent = shortName;
+    document.getElementById('sLatestAge').textContent = timeAgo(latest.date);
+
+    document.getElementById('cardSub').textContent =
+      `${n} backup${n !== 1 ? 's' : ''} · oldest: ${backups[0].name}`;
+  }
+
+  // ── Render table ──────────────────────────────────────────────────────────
+
+  function renderTable() {
+    const wrap = document.getElementById('tableWrap');
+
+    if (backups.length === 0) {
+      wrap.innerHTML = '<div class="placeholder">No backup files found in this bucket/prefix.</div>';
+      return;
+    }
+
+    const maxSize = Math.max(...backups.map(b => b.size));
+    const rows = [...backups].reverse().map((b, i) => {
+      const barW = maxSize > 0 ? Math.max(6, (b.size / maxSize) * 100) : 6;
+      const enc = b.name.endsWith('.gpg');
+      const icon = enc ? '🔐' : '📦';
+      const badge = enc
+        ? '<span class="badge badge-green">encrypted</span>'
+        : '<span class="badge" style="background:#1e293b;color:#64748b">plain</span>';
+      const ago = timeAgo(b.date);
+      const hoursOld = (Date.now() - new Date(b.date)) / 3600000;
+      const status = hoursOld <= 25
+        ? '<span class="badge badge-green">OK</span>'
+        : '<span class="badge badge-yellow">Old</span>';
+
+      return `
+        <tr>
+          <td>${icon}</td>
+          <td><span class="mono">${b.name}</span></td>
+          <td style="color:var(--muted)">${new Date(b.date).toUTCString().replace(' GMT', ' UTC')}</td>
+          <td>
+            <div class="bar-wrap">
+              <div class="bar" style="width:${barW}px"></div>
+              <span>${formatBytes(b.size)}</span>
+            </div>
+          </td>
+          <td>${badge}</td>
+          <td>${status}</td>
+        </tr>`;
+    }).join('');
+
+    wrap.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th style="width:36px"></th>
+            <th>File</th>
+            <th>Created (UTC)</th>
+            <th>Size</th>
+            <th>Type</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  // ── Load backups from R2 ──────────────────────────────────────────────────
+
+  async function loadBackups() {
+    hideError();
+    const base = document.getElementById('r2Url').value.trim().replace(/\/$/, '');
+    const prefix = document.getElementById('r2Prefix').value.trim().replace(/^\/|\/$/g, '');
+
+    if (!base) {
+      showError('Please enter your R2 public bucket URL.');
+      return;
+    }
+
+    const btn = document.getElementById('loadBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spin"></span>Loading...';
+    document.getElementById('tableWrap').innerHTML =
+      '<div class="placeholder"><span class="spin"></span>Fetching backups from R2...</div>';
+
+    try {
+      // S3-compatible XML listing endpoint
+      const listUrl = `${base}/?list-type=2&prefix=${encodeURIComponent(prefix + '/')}&max-keys=1000`;
+      const res = await fetch(listUrl);
+
+      if (!res.ok) {
+        throw new Error(
+          `HTTP ${res.status} ${res.statusText}. ` +
+          `Make sure Public Access is enabled on your R2 bucket in the Cloudflare dashboard.`
+        );
+      }
+
+      const text = await res.text();
+      const xml = new DOMParser().parseFromString(text, 'application/xml');
+
+      const parseErr = xml.querySelector('parsererror');
+      if (parseErr) throw new Error('Response is not valid XML. Check your bucket URL.');
+
+      const items = [...xml.querySelectorAll('Contents')]
+        .map(el => ({
+          name: el.querySelector('Key')?.textContent?.split('/').pop() || '',
+          size: parseInt(el.querySelector('Size')?.textContent || '0', 10),
+          date: el.querySelector('LastModified')?.textContent || '',
+        }))
+        .filter(b => /\.(tar\.gz|tar\.gz\.gpg)$/.test(b.name))
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+      backups = items;
+      updateStats();
+      renderTable();
+
+    } catch (err) {
+      const msg = err.message || String(err);
+      showError(`Failed to load backups: ${msg}`);
+      document.getElementById('tableWrap').innerHTML =
+        `<div class="placeholder">Failed to load. ${msg}</div>`;
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '🔄 Load';
+    }
+  }
+
+  function clearAll() {
+    backups = [];
+    updateStats();
+    document.getElementById('tableWrap').innerHTML =
+      '<div class="placeholder">Enter your R2 public URL above and click Load</div>';
+    hideError();
+  }
+
+  // Auto-refresh every 5 minutes when a URL is set
+  setInterval(() => {
+    if (document.getElementById('r2Url').value.trim()) loadBackups();
+  }, 5 * 60 * 1000);
+</script>
+</body>
+</html>
